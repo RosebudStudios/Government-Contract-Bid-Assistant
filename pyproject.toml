@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gov-contract-bid-assistant"
+version = "0.1.0"
+description = "Finds federal solicitations, scores them against a company profile, and answers questions with citations."
+requires-python = ">=3.10"
+dependencies = [
+    "langchain>=1.0",
+    "langchain-anthropic",
+    "langchain-mcp-adapters",
+    "langgraph",
+    "pydantic>=2",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "mypy>=1.0",
+    "ruff>=0.5",
+]
+
+
