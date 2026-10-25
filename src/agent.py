@@ -16,7 +16,7 @@ from langgraph.types import Command
 
 
 from .guards import UserQuery, detect_injection
-from .settings import Settings
+from .settings import Settings, require_env
 from .tools import interrupt_map, load_tools
 
 
@@ -53,27 +53,28 @@ async def open_checkpointer(settings: Settings):
 
 
 def build_agent(tools, settings: Settings, *, checkpointer, model=None, system_prompt=None, name="agent"):
-    model = ChatAnthropic(model_name="claude-sonnet-5",
-                          timeout=None, stop=None)
-    pii = [PIIMiddleware(t, strategy="redact", apply_to_output=True)
-           for t in ["email", "credit_card", "ip", "mac_address"]]
-    pii += [
-        PIIMiddleware("ssn", detector=r"\b\d{3}-\d{2}-\d{4}\b",
-                      strategy="redact", apply_to_output=True),
-        PIIMiddleware("api_key", detector=r"sk-[A-Za-z0-9_-]{20,}",
-                      strategy="redact", apply_to_output=True),
-    ]
-    middleware = [
-        make_input_guard(settings.max_input_chars), *pii,
-        ModelCallLimitMiddleware(run_limit=settings.run_limit),
-        ToolCallLimitMiddleware(run_limit=settings.run_limit),
-        ModelRetryMiddleware(max_retries=3, retry_on=RETRYABLE),
-        ToolRetryMiddleware(max_retries=2),
-    ]
-    if gated := interrupt_map(tools):
-        middleware.append(HumanInTheLoopMiddleware(interrupt_on=gated))
-    return create_agent(model=model, tools=tools, system_prompt=system_prompt,
-                        middleware=middleware, checkpointer=checkpointer, name=name)
+    if model is None:
+        model = ChatAnthropic(model_name=settings.model,
+                              timeout=None, stop=None)
+        pii = [PIIMiddleware(t, strategy="redact", apply_to_output=True)
+               for t in ["email", "credit_card", "ip", "mac_address"]]
+        pii += [
+            PIIMiddleware("ssn", detector=r"\b\d{3}-\d{2}-\d{4}\b",
+                          strategy="redact", apply_to_output=True),
+            PIIMiddleware("api_key", detector=r"sk-[A-Za-z0-9_-]{20,}",
+                          strategy="redact", apply_to_output=True),
+        ]
+        middleware = [
+            make_input_guard(settings.max_input_chars), *pii,
+            ModelCallLimitMiddleware(run_limit=settings.run_limit),
+            ToolCallLimitMiddleware(run_limit=settings.run_limit),
+            ModelRetryMiddleware(max_retries=3, retry_on=RETRYABLE),
+            ToolRetryMiddleware(max_retries=2),
+        ]
+        if gated := interrupt_map(tools):
+            middleware.append(HumanInTheLoopMiddleware(interrupt_on=gated))
+        return create_agent(model=model, tools=tools, system_prompt=system_prompt,
+                            middleware=middleware, checkpointer=checkpointer, name=name)
 
 
 def result_text(result):

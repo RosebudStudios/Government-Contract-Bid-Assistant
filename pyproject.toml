@@ -14,6 +14,9 @@ dependencies = [
     "langgraph",
     "pydantic>=2",
     "python-dotenv",
+    "langgraph-checkpoint-sqlite",
+    "aiosqlite",
+    "httpx"
 ]
 
 [project.optional-dependencies]

@@ -8,7 +8,7 @@ load_dotenv()
 
 
 def _model() -> str:
-    return os.getenv("AGENTMODEL", "claude-sonnet-5")
+    return os.getenv("AGENT_MODEL", "claude-sonnet-5")
 
 
 @dataclass(frozen=True)
@@ -20,9 +20,13 @@ class Settings:
     checkpointer: str = "memory"
     sqlite_path: str = "checkpoints.db"
     prompt_path: Path = Path(__file__).parent / "prompts" / "main.md"
+    db_path: Path = Path(__file__).parent.parent / "data" / "solicitations.db"
     mcp_servers: dict = field(default_factory=dict)
+    sam_base_url: str = "https://api.sam.gov/opportunities/v2/search"
 
-    def __post_init__(self):
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY is not set (see .env.example)")
+
+def require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"{name} is not set (see .env.example)")
+    return value
