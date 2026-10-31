@@ -13,7 +13,8 @@ EXPECTED_KEYS = {
     "type_of_set_aside", "type_of_set_aside_description",
     "full_parent_path_name", "ui_link", "description",
     "pop_city", "pop_state", "office_city", "office_state",
-    "contact_name", "contact_email", "resource_links", "active", "archive_date",
+    "contact_name", "contact_email", "resource_links", "active",
+    "archive_date"
 }
 
 
