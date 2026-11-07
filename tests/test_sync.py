@@ -10,7 +10,13 @@ from src.ingestion import (
     get_requests_used,
     choose_posted_from,
     get_last_synced_date,
+    RateLimitError,
+    fetch_descriptions,
+    mark_day_exhausted,
     ingest,
+    upsert,
+    get_notices_missing_description,
+    save_description_text,
     init_db,
     parse_args,
     run_sync,
@@ -29,7 +35,11 @@ class FakeSam:
     """Pretends to be SAM.gov. Serves `total_records` notices, `limit` per page,
     and remembers every request it received so tests can inspect them."""
 
-    def __init__(self, total_records=0, status_code=200, response_text="", description_body=None):
+    def __init__(self, total_records=0, status_code=200, response_text="", description_body=None,
+                 description_bodies=None, rate_limit_descriptions_after=None):
+        self.description_bodies = description_bodies or {}          # body per noticeid
+        self.rate_limit_descriptions_after = rate_limit_descriptions_after
+        self.description_request_count = 0
         # raw text served by the noticedesc route
         self.description_body = description_body
         self.total_records = total_records
@@ -43,7 +53,13 @@ class FakeSam:
         if self.status_code != 200:
             return httpx.Response(self.status_code, text=self.response_text)
         if request.url.path.endswith("/noticedesc"):
-            return httpx.Response(200, text=self.description_body or "")
+            self.description_request_count += 1
+            if (self.rate_limit_descriptions_after is not None
+                    and self.description_request_count > self.rate_limit_descriptions_after):
+                return httpx.Response(429, text="quota exceeded")
+            body = self.description_bodies.get(
+                parameters["noticeid"], self.description_body)
+            return httpx.Response(200, text=body or "")
         limit = int(parameters["limit"])
         offset = int(parameters["offset"])
         first_index = offset * limit              # offset is a page number
@@ -384,7 +400,7 @@ def test_exhausted_quota_makes_no_request_at_all(connection):
 
 def test_a_failed_run_still_records_the_requests_it_made(connection):
     with pytest.raises(RuntimeError):
-        asyncio.run(sync_with(FakeSam(status_code=429), connection))
+        asyncio.run(sync_with(FakeSam(status_code=500), connection))
     assert get_requests_used(connection, TODAY_TEXT) == 1
 
 
@@ -484,3 +500,175 @@ def test_fetch_description_server_error_raises_without_leaking_the_key():
         fetch_description_from(FakeSam(status_code=500))
     assert API_KEY not in str(error_info.value)
     assert error_info.value.__suppress_context__ is True
+
+
+# ---------------------------------------------------------------------------
+# fetch_descriptions
+# ---------------------------------------------------------------------------
+
+def add_notices(connection, notice_ids):
+    records = [{"notice_id": notice_id, "title": "T", "posted_date": "2026-10-20",
+                "response_deadline": "2026-11-05T12:00:00-05:00",
+                "description": f"https://api.sam.gov/prod/opportunities/v1/noticedesc?noticeid={notice_id}"}
+               for notice_id in notice_ids]
+    upsert(connection, records)
+
+
+def stored_description_texts(connection):
+    return dict(connection.execute("SELECT notice_id, description_text FROM solicitations"))
+
+
+async def describe_with(fake_sam, connection, *, daily_request_limit=1000, max_fetches=100):
+    samclient = make_client(fake_sam)
+    try:
+        return await fetch_descriptions(samclient, connection, TODAY,
+                                        daily_request_limit=daily_request_limit,
+                                        max_fetches=max_fetches)
+    finally:
+        await samclient.aclose()
+
+
+def test_fetch_descriptions_saves_the_text_for_every_missing_notice(connection):
+    add_notices(connection, ["a", "b", "c"])
+    fake_sam = FakeSam(description_bodies={
+        "a": '{"description": "text a"}', "b": '{"description": "text b"}', "c": '{"description": "text c"}'})
+    saved_count = asyncio.run(describe_with(fake_sam, connection))
+    assert saved_count == 3
+    assert stored_description_texts(connection) == {
+        "a": "text a", "b": "text b", "c": "text c"}
+
+
+def test_fetch_descriptions_skips_notices_that_already_have_text(connection):
+    add_notices(connection, ["a", "b"])
+    save_description_text(connection, "a", "already here")
+    fake_sam = FakeSam(description_body='{"description": "new"}')
+    asyncio.run(describe_with(fake_sam, connection))
+    assert [request["noticeid"] for request in fake_sam.requests] == ["b"]
+    assert stored_description_texts(connection)["a"] == "already here"
+
+
+def test_usage_recorded_is_the_requests_actually_made_not_the_budget(connection):
+    # only 2 notices, budget is 10
+    add_notices(connection, ["a", "b"])
+    asyncio.run(describe_with(FakeSam(description_body='{"description": "x"}'), connection,
+                              max_fetches=10))
+    assert get_requests_used(connection, TODAY_TEXT) == 2
+
+
+def test_fetching_stops_at_the_max_fetches_cap(connection):
+    add_notices(connection, ["a", "b", "c", "d"])
+    fake_sam = FakeSam(description_body='{"description": "x"}')
+    assert asyncio.run(describe_with(fake_sam, connection, max_fetches=2)) == 2
+    assert len(fake_sam.requests) == 2
+
+
+def test_fetching_stops_at_the_remaining_daily_quota(connection):
+    add_notices(connection, ["a", "b", "c", "d"])
+    # 1 of 3 already spent
+    add_requests_used(connection, TODAY_TEXT, 1)
+    fake_sam = FakeSam(description_body='{"description": "x"}')
+    asyncio.run(describe_with(fake_sam, connection, daily_request_limit=3))
+    assert len(fake_sam.requests) == 2
+    assert get_requests_used(connection, TODAY_TEXT) == 3
+
+
+# exactly used up, and over
+@pytest.mark.parametrize("already_used", [3, 5])
+def test_no_requests_when_the_quota_is_used_up(connection, already_used):
+    # the over-the-limit case catches a negative budget, which SQLite treats as "no LIMIT"
+    add_notices(connection, ["a", "b"])
+    add_requests_used(connection, TODAY_TEXT, already_used)
+    fake_sam = FakeSam(description_body='{"description": "x"}')
+    assert asyncio.run(describe_with(
+        fake_sam, connection, daily_request_limit=3)) == 0
+    assert fake_sam.requests == []
+
+
+def test_a_notice_with_no_description_is_stored_as_empty_and_never_retried(connection):
+    add_notices(connection, ["a"])
+    asyncio.run(describe_with(
+        FakeSam(description_body='{"description": null}'), connection))
+    assert stored_description_texts(connection) == {"a": ""}
+    second_server = FakeSam(description_body='{"description": "x"}')
+    asyncio.run(describe_with(second_server, connection))
+    assert second_server.requests == []
+
+
+def test_a_rate_limit_midway_keeps_earlier_texts_and_still_records_usage(connection):
+    add_notices(connection, ["a", "b", "c"])
+    fake_sam = FakeSam(
+        description_body='{"description": "x"}', rate_limit_descriptions_after=1)
+    with pytest.raises(RuntimeError, match="429"):
+        asyncio.run(describe_with(
+            fake_sam, connection, daily_request_limit=10))
+    texts = stored_description_texts(connection)
+    assert sum(text == "x" for text in texts.values()) == 1
+    assert sum(text is None for text in texts.values()) == 2
+    # a 429 marks the whole day as used up
+    assert get_requests_used(connection, TODAY_TEXT) == 10
+
+
+# ---------------------------------------------------------------------------
+# A 429 means SAM's daily quota is gone, whatever our own counter says
+# ---------------------------------------------------------------------------
+
+def test_rate_limit_error_is_still_a_runtime_error():
+    assert issubclass(RateLimitError, RuntimeError)
+
+
+def test_a_429_during_the_sync_marks_the_whole_day_as_used_up(connection):
+    with pytest.raises(RateLimitError):
+        asyncio.run(sync_with(FakeSam(status_code=429),
+                    connection, daily_request_limit=10))
+    assert get_requests_used(
+        connection, TODAY_TEXT) == 10      # not 1, and not 11
+
+
+def test_after_a_429_the_next_run_makes_no_request(connection):
+    with pytest.raises(RateLimitError):
+        asyncio.run(sync_with(FakeSam(status_code=429),
+                    connection, daily_request_limit=10))
+    second_server = FakeSam(total_records=5)
+    assert asyncio.run(sync_with(second_server, connection,
+                       daily_request_limit=10)) == 0
+    assert second_server.requests == []
+
+
+def test_a_429_during_descriptions_marks_the_whole_day_as_used_up(connection):
+    add_notices(connection, ["a", "b"])
+    fake_sam = FakeSam(
+        description_body='{"description": "x"}', rate_limit_descriptions_after=0)
+    with pytest.raises(RateLimitError):
+        asyncio.run(describe_with(
+            fake_sam, connection, daily_request_limit=10))
+    assert get_requests_used(connection, TODAY_TEXT) == 10
+
+
+def test_a_server_error_does_not_mark_the_day_as_used_up(connection):
+    with pytest.raises(RuntimeError):
+        asyncio.run(sync_with(FakeSam(status_code=500),
+                    connection, daily_request_limit=10))
+    assert get_requests_used(connection, TODAY_TEXT) == 1
+
+
+def test_mark_day_exhausted_raises_the_count_but_never_lowers_it(connection):
+    mark_day_exhausted(connection, "2026-10-28", 10)            # no row yet
+    assert get_requests_used(connection, "2026-10-28") == 10
+    add_requests_used(connection, "2026-10-29", 3)
+    # lower count is raised
+    mark_day_exhausted(connection, "2026-10-29", 10)
+    assert get_requests_used(connection, "2026-10-29") == 10
+    add_requests_used(connection, "2026-10-30", 15)
+    # higher count is kept
+    mark_day_exhausted(connection, "2026-10-30", 10)
+    assert get_requests_used(connection, "2026-10-30") == 15
+
+
+def test_an_exhausted_day_survives_closing_and_reopening(tmp_path):
+    database_path = tmp_path / "exhausted.db"
+    first_connection = init_db(database_path)
+    mark_day_exhausted(first_connection, TODAY_TEXT, 10)
+    first_connection.close()
+    second_connection = init_db(database_path)
+    assert get_requests_used(second_connection, TODAY_TEXT) == 10
+    second_connection.close()

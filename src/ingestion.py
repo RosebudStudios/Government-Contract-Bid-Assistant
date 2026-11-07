@@ -9,6 +9,11 @@ from pathlib import Path
 
 settings = Settings()
 BASE = settings.sam_base_url
+SAM_SYNC_NAME = "sam_opportunities"
+
+
+class RateLimitError(RuntimeError):  # command line options
+    """SAM.gov answered 429: the daily request quota is gone."""
 
 
 def parse_args(argv=None):
@@ -24,7 +29,7 @@ def parse_args(argv=None):
     return args
 
 
-def init_db(path) -> sqlite3.Connection:
+def init_db(path) -> sqlite3.Connection:  # table creation
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
     connection.execute("""CREATE TABLE IF NOT EXISTS solicitations(
@@ -45,87 +50,7 @@ def init_db(path) -> sqlite3.Connection:
     return connection
 
 
-def upsert(connection, records):
-    if not records:
-        return 0
-    column_names = list(records[0])
-    column_list = ", ".join(column_names)
-    placeholders = ", ".join(":" + column_name for column_name in column_names)
-    updates = ", ".join(
-        f"{column_name} = excluded.{column_name}" for column_name in column_names if column_name != "notice_id")
-    sql = f"""INSERT INTO solicitations ({column_list}) VALUES ({placeholders}) ON CONFLICT(notice_id) DO UPDATE SET {updates}"""
-    connection.executemany(sql, records)
-    connection.commit()
-    return len(records)
-
-
-def get_notices_missing_description(connection, today_text, fetch_limit):
-    rows = connection.execute(
-        """SELECT notice_id, description FROM solicitations
-        WHERE description_text IS NULL
-        AND description LIKE 'http%'
-        AND substr(response_deadline, 1, 10) >= :today_text
-        ORDER BY posted_date DESC
-        LIMIT :fetch_limit""",
-        {"today_text": today_text, "fetch_limit": fetch_limit}).fetchall()
-    return rows
-
-
-def save_description_text(connection, notice_id, description_text):
-    cursor = connection.execute(
-        """UPDATE solicitations SET description_text = :description_text
-        WHERE notice_id = :notice_id""",
-        {"notice_id": notice_id, "description_text": description_text}
-    )
-    connection.commit()
-    return cursor.rowcount
-
-
-SAM_SYNC_NAME = "sam_opportunities"
-
-
-def save_last_synced_date(connection, synced_date):
-    connection.execute("""INSERT INTO sync_state(sync_name, last_synced_date)
-      VALUES (:sync_name, :last_synced_date)
-       ON CONFLICT(sync_name) DO UPDATE SET last_synced_date = excluded.last_synced_date""",
-                       {"sync_name": SAM_SYNC_NAME, "last_synced_date": synced_date.isoformat()})
-    connection.commit()
-    return
-
-
-def add_requests_used(connection, day, request_count):
-    connection.execute(
-        """INSERT INTO api_usage (day, request_count) VALUES (:day, :request_count) ON CONFLICT(day) DO UPDATE SET request_count = request_count+excluded.request_count""", {"day": day, "request_count": request_count})
-    connection.commit()
-    return
-
-
-def get_last_synced_date(connection):
-    row = connection.execute(
-        """SELECT last_synced_date FROM sync_state WHERE sync_name = :sync_name""", {"sync_name": SAM_SYNC_NAME},).fetchone()
-    if row is None:
-        return None
-    return date.fromisoformat(row[0])
-
-
-def get_requests_used(connection, day):
-    row = connection.execute(
-        """SELECT request_count FROM api_usage WHERE day = :day""", {"day": day},).fetchone()
-    if row is None:
-        return 0
-    return row[0]
-
-
-def choose_posted_from(last_synced_date, today, days, lookback_days):
-    if last_synced_date is None:
-        wanted_start = today - timedelta(days=days)
-    else:
-        wanted_start = last_synced_date - timedelta(days=lookback_days)
-    earliest_allowed = today - timedelta(days=364)
-    return max(wanted_start, earliest_allowed)
-
-
-class SamClient:
+class SamClient:  # talking to sam.gov and fetching the raw data
     def __init__(self, api_key=None, client=None):
         self.api_key = api_key or require_env("SAM_API_KEY")
         self.client = client or httpx.AsyncClient(timeout=30)
@@ -139,7 +64,7 @@ class SamClient:
             if response.status_code == 404:
                 return None
             if response.status_code == 429:
-                raise RuntimeError(
+                raise RateLimitError(
                     f"SAM.gov rate limit hit (429). Body: {response.text[:200]}")
             response.raise_for_status()
             return response
@@ -194,7 +119,15 @@ class SamClient:
         return description_text
 
 
-def normalize(row) -> dict:
+def mark_day_exhausted(connection, day, daily_request_limit):
+    connection.execute(
+        """INSERT INTO api_usage (day, request_count) VALUES (:day, :daily_request_limit)
+           ON CONFLICT(day) DO UPDATE SET request_count = max(request_count, :daily_request_limit)""",
+        {"day": day, "daily_request_limit": daily_request_limit})
+    connection.commit()
+
+
+def normalize(row) -> dict:  # reshaping the data that comes back
     place = row.get("placeOfPerformance") or {}
     office = row.get("officeAddress") or {}
     contacts = row.get("pointOfContact") or []
@@ -219,11 +152,101 @@ def normalize(row) -> dict:
     return formatted_dict
 
 
+def upsert(connection, records):  # storing the notices
+    if not records:
+        return 0
+    column_names = list(records[0])
+    column_list = ", ".join(column_names)
+    placeholders = ", ".join(":" + column_name for column_name in column_names)
+    updates = ", ".join(
+        f"{column_name} = excluded.{column_name}" for column_name in column_names if column_name != "notice_id")
+    sql = f"""INSERT INTO solicitations ({column_list}) VALUES ({placeholders}) ON CONFLICT(notice_id) DO UPDATE SET {updates}"""
+    connection.executemany(sql, records)
+    connection.commit()
+    return len(records)
+
+
+def get_last_synced_date(connection):  # bookmark, read
+    row = connection.execute(
+        """SELECT last_synced_date FROM sync_state WHERE sync_name = :sync_name""", {"sync_name": SAM_SYNC_NAME},).fetchone()
+    if row is None:
+        return None
+    return date.fromisoformat(row[0])
+
+
+def save_last_synced_date(connection, synced_date):  # bookmark, write
+    connection.execute("""INSERT INTO sync_state(sync_name, last_synced_date)
+      VALUES (:sync_name, :last_synced_date)
+       ON CONFLICT(sync_name) DO UPDATE SET last_synced_date = excluded.last_synced_date""",
+                       {"sync_name": SAM_SYNC_NAME, "last_synced_date": synced_date.isoformat()})
+    connection.commit()
+    return
+
+
+# turns bookmark into a start date
+def choose_posted_from(last_synced_date, today, days, lookback_days):
+    if last_synced_date is None:
+        wanted_start = today - timedelta(days=days)
+    else:
+        wanted_start = last_synced_date - timedelta(days=lookback_days)
+    earliest_allowed = today - timedelta(days=364)
+    return max(wanted_start, earliest_allowed)
+
+
+def get_requests_used(connection, day):  # quota counter, read
+    row = connection.execute(
+        """SELECT request_count FROM api_usage WHERE day = :day""", {"day": day},).fetchone()
+    if row is None:
+        return 0
+    return row[0]
+
+
+def add_requests_used(connection, day, request_count):  # quota counter, write
+    connection.execute(
+        """INSERT INTO api_usage (day, request_count) VALUES (:day, :request_count) ON CONFLICT(day) DO UPDATE SET request_count = request_count+excluded.request_count""", {"day": day, "request_count": request_count})
+    connection.commit()
+    return
+
+
+# which descriptions are still needed
+def get_notices_missing_description(connection, today_text, fetch_limit, target_naics_codes=()):
+    naics_parameters = {f"naics_{index}": naics_code for index,
+                        naics_code in enumerate(target_naics_codes)}
+    naics_placeholders = ", ".join(f":{name}" for name in naics_parameters)
+    if naics_placeholders:
+        relevance_order = f"CASE WHEN naics_code IN ({naics_placeholders}) THEN 0 ELSE 1 END, "
+    else:
+        relevance_order = ""
+    rows = connection.execute(
+        f"""SELECT notice_id, description FROM solicitations
+        WHERE description_text IS NULL 
+        AND naics_code IN (:naics_0, :naics_1)
+        AND description LIKE 'http%'
+        AND substr(response_deadline, 1, 10) >= :today_text
+        ORDER BY {relevance_order}posted_date DESC
+        LIMIT :fetch_limit""",
+        {"today_text": today_text, "fetch_limit": fetch_limit, **naics_parameters}).fetchall()
+    return rows
+
+
+# storing a fetched description
+def save_description_text(connection, notice_id, description_text):
+    cursor = connection.execute(
+        """UPDATE solicitations SET description_text = :description_text
+        WHERE notice_id = :notice_id""",
+        {"notice_id": notice_id, "description_text": description_text}
+    )
+    connection.commit()
+    return cursor.rowcount
+
+
+# the fetch, normalize, and store steps combined
 async def ingest(client, connection, posted_from, posted_to, **filters) -> int:
     records = [normalize(row) async for row in client.search(posted_from, posted_to, **filters)]
     return upsert(connection, records)
 
 
+# the notice sync with its bookmark and its own quota rules
 async def run_sync(samclient, connection, *, days, max_pages, today, lookback_days, daily_request_limit):
     today_text = today.isoformat()
     requests_used_today = get_requests_used(connection, today_text)
@@ -243,12 +266,15 @@ async def run_sync(samclient, connection, *, days, max_pages, today, lookback_da
 
     requests_before_run = samclient.requests_made
     try:
-        upserted_count = await ingest(samclient, connection, posted_from, today,
-                                      limit=1000, max_pages=page_limit)
-    finally:
-        requests_this_run = samclient.requests_made - requests_before_run
-        add_requests_used(connection, today_text, requests_this_run)
-
+        try:
+            upserted_count = await ingest(samclient, connection, posted_from, today,
+                                          limit=1000, max_pages=page_limit)
+        finally:
+            requests_this_run = samclient.requests_made - requests_before_run
+            add_requests_used(connection, today_text, requests_this_run)
+    except RateLimitError:
+        mark_day_exhausted(connection, today_text, daily_request_limit)
+        raise
     if samclient.stopped_early:
         print("Stopped early at the page or quota limit; bookmark not advanced")
     else:
@@ -256,17 +282,45 @@ async def run_sync(samclient, connection, *, days, max_pages, today, lookback_da
     return upserted_count
 
 
+# the description pass with its own quota rules
+async def fetch_descriptions(samclient, connection, today, *, daily_request_limit, max_fetches, target_naics_codes):
+    today_text = today.isoformat()
+    requests_remaining = daily_request_limit - \
+        get_requests_used(connection, today_text)
+    request_budget = min(max_fetches, requests_remaining)
+    if request_budget <= 0:
+        return 0
+    notices_missing_description = get_notices_missing_description(
+        connection, today_text, request_budget, target_naics_codes)
+    saved_count = 0
+    requests_before_run = samclient.requests_made
+    try:
+        for notice_id, description_url in notices_missing_description:
+            description_text = await samclient.fetch_description(description_url)
+            save_description_text(connection, notice_id, description_text)
+            saved_count += 1
+    finally:
+        requests_this_run = samclient.requests_made - requests_before_run
+        add_requests_used(connection, today_text, requests_this_run)
+    return saved_count
+
+
+# runs both run_sync and fetch descriptions
 async def main(days: int, max_pages: int | None):
     samclient = SamClient()
+    today = date.today()
     try:
         connection = init_db(settings.db_path)
         try:
-            upserted_count = await run_sync(samclient, connection, days=days, max_pages=max_pages, today=date.today(), lookback_days=settings.sync_lookback_days, daily_request_limit=settings.daily_request_limit)
+            upserted_count = await run_sync(samclient, connection, days=days, max_pages=max_pages, today=today, lookback_days=settings.sync_lookback_days, daily_request_limit=settings.daily_request_limit)
             print(f"upserted {upserted_count} records")
+            saved_count = await fetch_descriptions(samclient, connection, today, daily_request_limit=settings.daily_request_limit, max_fetches=settings.description_requests_per_run, target_naics_codes=settings.target_naics_codes)
+            print(f"saved {saved_count} descriptions")
         finally:
             connection.close()
     finally:
         await samclient.aclose()
+
 
 if __name__ == "__main__":
     args = parse_args()

@@ -1,7 +1,8 @@
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from .sample import get_current_time
+from .search_opportunities import search_opportunities
+from .get_opportunity import get_opportunity
 
-LOCAL_TOOLS: list = [get_current_time]
+LOCAL_TOOLS: list = [search_opportunities, get_opportunity]
 
 
 async def load_tools(settings) -> list:

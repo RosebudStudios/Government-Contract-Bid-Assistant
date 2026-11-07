@@ -73,8 +73,8 @@ def build_agent(tools, settings: Settings, *, checkpointer, model=None, system_p
         ]
         if gated := interrupt_map(tools):
             middleware.append(HumanInTheLoopMiddleware(interrupt_on=gated))
-        return create_agent(model=model, tools=tools, system_prompt=system_prompt,
-                            middleware=middleware, checkpointer=checkpointer, name=name)
+    return create_agent(model=model, tools=tools, system_prompt=system_prompt,
+                        middleware=middleware, checkpointer=checkpointer, name=name)
 
 
 def result_text(result):
@@ -103,7 +103,7 @@ async def run_turn(agent, query, config, approve=ask_approval):
 async def main():
     settings = Settings()
     tools = await load_tools(settings)
-    agent = build_agent(tools=[])
+    agent = build_agent(tools=[tools])
     config = {"configurable": {"thread_id": uuid.uuid4().hex},
               "recursion_limit": 50}
     print("Enter your question. Type 'quit' to quit.")

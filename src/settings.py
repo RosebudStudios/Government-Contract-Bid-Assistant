@@ -25,6 +25,8 @@ class Settings:
     sam_base_url: str = "https://api.sam.gov/opportunities/v2/search"
     sync_lookback_days: int = 1
     daily_request_limit: int = 10
+    description_requests_per_run: int = 5
+    target_naics_codes: tuple = ("541512", "541511")
 
 
 def require_env(name: str) -> str:
