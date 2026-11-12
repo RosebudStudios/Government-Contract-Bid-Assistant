@@ -16,8 +16,8 @@ dependencies = [
     "python-dotenv",
     "langgraph-checkpoint-sqlite",
     "aiosqlite",
-    "httpx"
-    "pypdf"
+    "httpx",
+    "pypdf",
     "python-docx"
 ]
 
