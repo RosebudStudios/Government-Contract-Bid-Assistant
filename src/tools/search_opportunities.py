@@ -20,7 +20,7 @@ class SearchOpportunitiesInput(BaseModel):
     set_aside: Optional[str] = Field(
         default=None, description="Set-aside code to match exactly, for example 'SBA'.")
     posted_after: Optional[str] = Field(
-        default=None, description="Only notices posted after this date as YYY-MM-DD.")
+        default=None, description="Only notices posted after this date as YYYY-MM-DD.")
     naics_code: Optional[str] = Field(
         default=None, description="Six-digit NAICS code to match exactly, for example '541512'.")
     limit: int = Field(
@@ -38,7 +38,7 @@ def search_rows(connection, *, keyword=None, state=None, set_aside=None, posted_
         conditions.append("pop_state = :state COLLATE NOCASE")
         parameters["state"] = state
     if set_aside:
-        conditions.append("type_of_set_aside = :set_aside COLLATE NO CASE")
+        conditions.append("type_of_set_aside = :set_aside COLLATE NOCASE")
         parameters["set_aside"] = set_aside
     if posted_after:
         conditions.append("posted_date > :posted_after")

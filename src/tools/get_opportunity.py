@@ -71,7 +71,7 @@ def format_notice(row) -> str:
                 links = []
             if links:
                 lines.append("resource_links:\n" +
-                             "\n".join(f" {link}" for link in links))
+                             "\n".join(f"  {link}" for link in links))
             continue
         lines.append(f"{column}: {value}")
     lines.append(format_description(

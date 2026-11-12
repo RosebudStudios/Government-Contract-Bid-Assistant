@@ -55,7 +55,7 @@ def test_empty_fields_are_skipped(connection):
 
 
 def test_resource_links_are_listed_one_per_line(connection):
-    links = ["https://sam.gov/att1.pdf", "https://sam.gov/att2.pdf"]
+    links = ["https://sam.gov/att1.pdf",  "https://sam.gov/att2.pdf"]
     upsert(connection, [make_notice("a", resource_links=json.dumps(links))])
     text = describe(connection, "a")
     assert "  https://sam.gov/att1.pdf\n  https://sam.gov/att2.pdf" in text

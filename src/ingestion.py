@@ -3,6 +3,9 @@ import asyncio
 import json
 import sqlite3
 import argparse
+import os
+from dataclasses import dataclass
+from email.message import Message
 from .settings import Settings, require_env
 from datetime import date, timedelta
 from pathlib import Path
@@ -10,10 +13,27 @@ from pathlib import Path
 settings = Settings()
 BASE = settings.sam_base_url
 SAM_SYNC_NAME = "sam_opportunities"
+SUPPORTED_EXTENSIONS = (".pdf", ".docx")
 
 
 class RateLimitError(RuntimeError):  # command line options
     """SAM.gov answered 429: the daily request quota is gone."""
+
+
+@dataclass(frozen=True)
+class DownloadResult:
+    status: str
+    filename: str | None = None
+    content_type: str | None = None
+    saved_path: Path | None = None
+
+
+def parse_filename(content_disposition):
+    if not content_disposition:
+        return None
+    message = Message()
+    message["content-disposition"] = content_disposition
+    return message.get_filename()
 
 
 def parse_args(argv=None):
@@ -46,6 +66,12 @@ def init_db(path) -> sqlite3.Connection:  # table creation
     if "description_text" not in existing_column_names:
         connection.execute(
             "ALTER TABLE solicitations ADD COLUMN description_text TEXT")
+    connection.execute("""CREATE TABLE IF NOT EXISTS documents(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, notice_id TEXT NOT NULL, link TEXT UNIQUE NOT NULL, filename TEXT,
+        content_type TEXT, status TEXT NOT NULL DEFAULT 'pending', error TEXT)""")
+    connection.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks USING fts5(
+    chunk_text, document_id UNINDEXED, notice_id UNINDEXED, page_number UNINDEXED, tokenize = 'porter unicode61'
+    )""")
     connection.commit()
     return connection
 
@@ -57,20 +83,25 @@ class SamClient:  # talking to sam.gov and fetching the raw data
         self.stopped_early = False
         self.requests_made = 0
 
-    async def _get(self, url, params=None):
-        self.requests_made += 1
+    async def _get(self, url, params=None, *, accept_redirect=False, counts_toward_quota=True):
+        if counts_toward_quota:
+            self.requests_made += 1
         try:
-            response = await self.client.get(url, params=params)
+            response = await self.client.get(url, params=params, follow_redirects=False)
             if response.status_code == 404:
                 return None
             if response.status_code == 429:
                 raise RateLimitError(
                     f"SAM.gov rate limit hit (429). Body: {response.text[:200]}")
+            if accept_redirect and response.is_redirect:
+                return response
             response.raise_for_status()
             return response
         except httpx.HTTPStatusError as http_error:
+            response_body = http_error.response.text[:200].replace(
+                self.api_key, "***")
             raise RuntimeError(
-                f"SAM.gov error {http_error.response.status_code}") from None
+                f"SAM.gov error {http_error.response.status_code}: {response_body}") from None
 
     async def aclose(self):
         await self.client.aclose()
@@ -117,6 +148,47 @@ class SamClient:  # talking to sam.gov and fetching the raw data
         if not description_text.strip() or description_text.strip() == "Description Not Found":
             return ""
         return description_text
+
+    async def download_attachment(self, link, folder, file_stem, *, max_bytes, counts_toward_quota=False):
+        url_with_key = httpx.URL(link).copy_merge_params(
+            {"api_key": self.api_key})
+        redirect = await self._get(url_with_key, accept_redirect=True, counts_toward_quota=counts_toward_quota)
+        if redirect is None:
+            return DownloadResult("not_found")
+        if not redirect.is_redirect:
+            raise RuntimeError(
+                f"SAM.gov answered {redirect.status_code}, expected a redirect")
+        filename = parse_filename(redirect.headers.get("content-disposition"))
+        content_type = redirect.headers.get("content-type")
+        extension = Path(filename).suffix.lower() if filename else ""
+        if extension not in SUPPORTED_EXTENSIONS:
+            return DownloadResult("unsupported", filename, content_type)
+        file_url = httpx.URL(redirect.headers.get("location", ""))
+        if file_url.scheme != "https":
+            raise RuntimeError("redirect target is not an https address")
+        saved_path = Path(folder) / f"{file_stem}{extension}"
+        part_path = saved_path.with_name(saved_path.name + ".part")
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        try:
+            async with self.client.stream("GET", file_url) as file_response:
+                if file_response.status_code != 200:
+                    raise RuntimeError(
+                        f"file host answered {file_response.status_code}")
+                if int(file_response.headers.get("content-length") or 0) > max_bytes:
+                    return DownloadResult("too_large", filename, content_type)
+                total_bytes = 0
+                with open(part_path, "wb") as part_file:
+                    async for chunk in file_response.aiter_bytes():
+                        total_bytes += len(chunk)
+                        if total_bytes > max_bytes:
+                            return DownloadResult("too_large", filename, content_type)
+                        part_file.write(chunk)
+            os.replace(part_path, saved_path)
+        except httpx.HTTPError:
+            raise RuntimeError("file download failed") from None
+        finally:
+            part_path.unlink(missing_ok=True)
+        return DownloadResult("downloaded", filename, content_type, saved_path)
 
 
 def mark_day_exhausted(connection, day, daily_request_limit):
@@ -210,20 +282,20 @@ def add_requests_used(connection, day, request_count):  # quota counter, write
 
 # which descriptions are still needed
 def get_notices_missing_description(connection, today_text, fetch_limit, target_naics_codes=()):
-    naics_parameters = {f"naics_{index}": naics_code for index,
-                        naics_code in enumerate(target_naics_codes)}
+    naics_parameters = {f"naics_{index}": naics_code
+                        for index, naics_code in enumerate(target_naics_codes)}
     naics_placeholders = ", ".join(f":{name}" for name in naics_parameters)
     if naics_placeholders:
-        relevance_order = f"CASE WHEN naics_code IN ({naics_placeholders}) THEN 0 ELSE 1 END, "
+        naics_filter = f"AND naics_code IN ({naics_placeholders})"
     else:
-        relevance_order = ""
+        naics_filter = ""
     rows = connection.execute(
         f"""SELECT notice_id, description FROM solicitations
-        WHERE description_text IS NULL 
-        AND naics_code IN (:naics_0, :naics_1)
+        WHERE description_text IS NULL
         AND description LIKE 'http%'
         AND substr(response_deadline, 1, 10) >= :today_text
-        ORDER BY {relevance_order}posted_date DESC
+        {naics_filter}
+        ORDER BY posted_date DESC
         LIMIT :fetch_limit""",
         {"today_text": today_text, "fetch_limit": fetch_limit, **naics_parameters}).fetchall()
     return rows
@@ -283,7 +355,7 @@ async def run_sync(samclient, connection, *, days, max_pages, today, lookback_da
 
 
 # the description pass with its own quota rules
-async def fetch_descriptions(samclient, connection, today, *, daily_request_limit, max_fetches, target_naics_codes):
+async def fetch_descriptions(samclient, connection, today, *, daily_request_limit, max_fetches, target_naics_codes=()):
     today_text = today.isoformat()
     requests_remaining = daily_request_limit - \
         get_requests_used(connection, today_text)
@@ -295,13 +367,17 @@ async def fetch_descriptions(samclient, connection, today, *, daily_request_limi
     saved_count = 0
     requests_before_run = samclient.requests_made
     try:
-        for notice_id, description_url in notices_missing_description:
-            description_text = await samclient.fetch_description(description_url)
-            save_description_text(connection, notice_id, description_text)
-            saved_count += 1
-    finally:
-        requests_this_run = samclient.requests_made - requests_before_run
-        add_requests_used(connection, today_text, requests_this_run)
+        try:
+            for notice_id, description_url in notices_missing_description:
+                description_text = await samclient.fetch_description(description_url)
+                save_description_text(connection, notice_id, description_text)
+                saved_count += 1
+        finally:
+            requests_this_run = samclient.requests_made - requests_before_run
+            add_requests_used(connection, today_text, requests_this_run)
+    except RateLimitError:
+        mark_day_exhausted(connection, today_text, daily_request_limit)
+        raise
     return saved_count
 
 

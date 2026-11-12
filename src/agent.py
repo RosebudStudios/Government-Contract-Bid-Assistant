@@ -57,7 +57,7 @@ def build_agent(tools, settings: Settings, *, checkpointer, model=None, system_p
         model = ChatAnthropic(model_name=settings.model,
                               timeout=None, stop=None)
         pii = [PIIMiddleware(t, strategy="redact", apply_to_output=True)
-               for t in ["email", "credit_card", "ip", "mac_address"]]
+               for t in ["credit_card", "ip", "mac_address"]]
         pii += [
             PIIMiddleware("ssn", detector=r"\b\d{3}-\d{2}-\d{4}\b",
                           strategy="redact", apply_to_output=True),

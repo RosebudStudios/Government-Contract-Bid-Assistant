@@ -17,6 +17,8 @@ dependencies = [
     "langgraph-checkpoint-sqlite",
     "aiosqlite",
     "httpx"
+    "pypdf"
+    "python-docx"
 ]
 
 [project.optional-dependencies]
