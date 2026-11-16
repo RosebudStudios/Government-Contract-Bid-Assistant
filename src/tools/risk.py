@@ -11,7 +11,8 @@ class RiskLevel(Enum):
 ACTION_RISK: dict[str, RiskLevel] = {
     "search_opportunities": RiskLevel.LOW,
     "get_opportunity": RiskLevel.LOW,
-    "search_solicitation_documents": RiskLevel.LOW
+    "search_solicitation_documents": RiskLevel.LOW,
+    "score_opportunity": RiskLevel.LOW
 }
 
 

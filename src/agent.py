@@ -41,6 +41,8 @@ def make_input_guard(max_chars: int):
                     "jump_to": "end"}
         return None
 
+    return input_guard
+
 
 @asynccontextmanager
 async def open_checkpointer(settings: Settings):
@@ -56,23 +58,23 @@ def build_agent(tools, settings: Settings, *, checkpointer, model=None, system_p
     if model is None:
         model = ChatAnthropic(model_name=settings.model,
                               timeout=None, stop=None)
-        pii = [PIIMiddleware(t, strategy="redact", apply_to_output=True)
-               for t in ["credit_card", "ip", "mac_address"]]
-        pii += [
-            PIIMiddleware("ssn", detector=r"\b\d{3}-\d{2}-\d{4}\b",
-                          strategy="redact", apply_to_output=True),
-            PIIMiddleware("api_key", detector=r"sk-[A-Za-z0-9_-]{20,}",
-                          strategy="redact", apply_to_output=True),
-        ]
-        middleware = [
-            make_input_guard(settings.max_input_chars), *pii,
-            ModelCallLimitMiddleware(run_limit=settings.run_limit),
-            ToolCallLimitMiddleware(run_limit=settings.run_limit),
-            ModelRetryMiddleware(max_retries=3, retry_on=RETRYABLE),
-            ToolRetryMiddleware(max_retries=2),
-        ]
-        if gated := interrupt_map(tools):
-            middleware.append(HumanInTheLoopMiddleware(interrupt_on=gated))
+    pii_middleware = [PIIMiddleware(pii_type, strategy="redact", apply_to_output=True)
+                      for pii_type in ["credit_card", "ip", "mac_address"]]
+    pii_middleware += [
+        PIIMiddleware("ssn", detector=r"\b\d{3}-\d{2}-\d{4}\b",
+                      strategy="redact", apply_to_output=True),
+        PIIMiddleware("api_key", detector=r"sk-[A-Za-z0-9_-]{20,}",
+                      strategy="redact", apply_to_output=True),
+    ]
+    middleware = [
+        make_input_guard(settings.max_input_chars), *pii_middleware,
+        ModelCallLimitMiddleware(run_limit=settings.run_limit),
+        ToolCallLimitMiddleware(run_limit=settings.run_limit),
+        ModelRetryMiddleware(max_retries=3, retry_on=RETRYABLE),
+        ToolRetryMiddleware(max_retries=2),
+    ]
+    if gated_tools := interrupt_map(tools):
+        middleware.append(HumanInTheLoopMiddleware(interrupt_on=gated_tools))
     return create_agent(model=model, tools=tools, system_prompt=system_prompt,
                         middleware=middleware, checkpointer=checkpointer, name=name)
 
@@ -103,18 +105,21 @@ async def run_turn(agent, query, config, approve=ask_approval):
 async def main():
     settings = Settings()
     tools = await load_tools(settings)
-    agent = build_agent(tools=[tools])
-    config = {"configurable": {"thread_id": uuid.uuid4().hex},
-              "recursion_limit": 50}
-    print("Enter your question. Type 'quit' to quit.")
-    while True:
-        question = input("You: ")
-        if question.lower() == 'quit':
-            break
-        try:
-            print(await run_turn(agent, question, config))
-        except GraphRecursionError:
-            print("Error: the agent hit its step limit without finishing.")
+    system_prompt = settings.prompt_path.read_text(encoding="utf-8")
+    async with open_checkpointer(settings) as checkpointer:
+        agent = build_agent(tools, settings, checkpointer=checkpointer,
+                            system_prompt=system_prompt)
+        config = {"configurable": {"thread_id": uuid.uuid4().hex},
+                  "recursion_limit": settings.recursion_limit}
+        print("Enter your question. Type 'quit' to quit.")
+        while True:
+            question = input("You: ")
+            if question.strip().lower() == "quit":
+                break
+            try:
+                print(await run_turn(agent, question, config))
+            except GraphRecursionError:
+                print("Error: the agent hit its step limit without finishing.")
 
 
 def run():

@@ -22,6 +22,8 @@ class Settings:
     prompt_path: Path = Path(__file__).parent / "prompts" / "main.md"
     db_path: Path = Path(__file__).parent.parent / "data" / "solicitations.db"
     documents_dir: Path = Path(__file__).parent.parent/"data"/"documents"
+    profile_path: Path = Path(__file__).parent.parent / \
+        "config" / "company_profile.toml"
     mcp_servers: dict = field(default_factory=dict)
     sam_base_url: str = "https://api.sam.gov/opportunities/v2/search"
     sync_lookback_days: int = 1
