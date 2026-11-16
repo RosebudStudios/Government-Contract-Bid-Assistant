@@ -1,5 +1,4 @@
 import httpx
-import asyncio
 import json
 import sqlite3
 import argparse
@@ -379,25 +378,3 @@ async def fetch_descriptions(samclient, connection, today, *, daily_request_limi
         mark_day_exhausted(connection, today_text, daily_request_limit)
         raise
     return saved_count
-
-
-# runs both run_sync and fetch descriptions
-async def main(days: int, max_pages: int | None):
-    samclient = SamClient()
-    today = date.today()
-    try:
-        connection = init_db(settings.db_path)
-        try:
-            upserted_count = await run_sync(samclient, connection, days=days, max_pages=max_pages, today=today, lookback_days=settings.sync_lookback_days, daily_request_limit=settings.daily_request_limit)
-            print(f"upserted {upserted_count} records")
-            saved_count = await fetch_descriptions(samclient, connection, today, daily_request_limit=settings.daily_request_limit, max_fetches=settings.description_requests_per_run, target_naics_codes=settings.target_naics_codes)
-            print(f"saved {saved_count} descriptions")
-        finally:
-            connection.close()
-    finally:
-        await samclient.aclose()
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    asyncio.run(main(args.days, args.max_pages))
