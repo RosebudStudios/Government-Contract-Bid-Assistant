@@ -4,6 +4,7 @@ from typing import Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from src.settings import Settings
+from datetime import date
 
 settings = Settings()
 MAX_RESULTS = 50
@@ -25,9 +26,11 @@ class SearchOpportunitiesInput(BaseModel):
         default=None, description="Six-digit NAICS code to match exactly, for example '541512'.")
     limit: int = Field(
         default=25, description=f"Maximum number of results, 1 to {MAX_RESULTS}.")
+    open_only: bool = Field(
+        default=False, description="If true, only notices whose response deadline has not passed. Use this when the user asks for open or active notices.")
 
 
-def search_rows(connection, *, keyword=None, state=None, set_aside=None, posted_after=None, naics_code=None, limit=25):
+def search_rows(connection, *, keyword=None, state=None, set_aside=None, posted_after=None, naics_code=None, limit=25, open_only=False, today=None):
     conditions = []
     parameters = {"limit": max(1, min(limit, MAX_RESULTS))}
     if keyword:
@@ -46,6 +49,10 @@ def search_rows(connection, *, keyword=None, state=None, set_aside=None, posted_
     if naics_code:
         conditions.append("naics_code = :naics_code")
         parameters["naics_code"] = naics_code
+    if open_only:
+        today_text = (today or date.today()).isoformat()
+        conditions.apppend("substr(response_deadline, 1, 10) >= :today_text")
+        parameters["today_text"] = today_text
     where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
     column_list = ", ".join(RESULT_COLUMNS)
     return connection.execute(
@@ -68,10 +75,10 @@ def format_rows(rows) -> str:
 
 
 @tool("search_opportunities", args_schema=SearchOpportunitiesInput)
-def search_opportunities(keyword=None, state=None, set_aside=None, posted_after=None, naics_code=None, limit=25) -> str:
+def search_opportunities(keyword=None, state=None, set_aside=None, posted_after=None, naics_code=None, limit=25, open_only=False) -> str:
     """Search the local database of SAM.gov contract opportunities. All filters are optional and combined with AND. Returns summaries only; the description text is not included."""
     read_only_uri = settings.db_path.as_uri() + "?mode=ro"
     with closing(sqlite3.connect(read_only_uri, uri=True)) as connection:
         rows = search_rows(connection, keyword=keyword, state=state, set_aside=set_aside,
-                           posted_after=posted_after, naics_code=naics_code, limit=limit)
+                           posted_after=posted_after, naics_code=naics_code, limit=limit, open_only=open_only)
     return format_rows(rows)

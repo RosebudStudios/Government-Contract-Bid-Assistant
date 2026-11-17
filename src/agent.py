@@ -14,9 +14,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 
+from .settings import Settings
 
 from .guards import UserQuery, detect_injection
-from .settings import Settings, require_env
 from .tools import interrupt_map, load_tools
 
 

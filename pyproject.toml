@@ -1,3 +1,8 @@
+[tool.setuptools.packages.find]
+include = ["src*"]
+[tool.setuptools.package-data]
+"src.prompts" = ["*.md"]
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
@@ -6,11 +11,13 @@ build-backend = "setuptools.build_meta"
 name = "gov-contract-bid-assistant"
 version = "0.1.0"
 description = "Finds federal solicitations, scores them against a company profile, and answers questions with citations."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "langchain>=1.0",
     "langchain-anthropic",
     "langchain-mcp-adapters",
+    "langchain-community",
+    "langchain-text-splitters",
     "langgraph",
     "pydantic>=2",
     "python-dotenv",
@@ -18,7 +25,8 @@ dependencies = [
     "aiosqlite",
     "httpx",
     "pypdf",
-    "python-docx"
+    "python-docx",
+    "anthropic"
 ]
 
 [project.optional-dependencies]
@@ -28,5 +36,3 @@ dev = [
     "mypy>=1.0",
     "ruff>=0.5",
 ]
-
-

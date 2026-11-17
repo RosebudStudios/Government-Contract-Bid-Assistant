@@ -2,7 +2,7 @@ import json
 import asyncio
 import docx
 from pathlib import Path
-from datetime import date, timedelta
+from datetime import date
 from .ingestion import SamClient, init_db, settings, RateLimitError
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -122,6 +122,8 @@ def index_pending(connection, folder):
         {"status": "downloaded"}).fetchall()
     for document_id, notice_id, filename in documents:
         try:
+            if not filename:
+                set_document_status(connection, document_id, "failed")
             file_extension = Path(filename).suffix.lower()
             path = Path(folder) / f"{document_id}{file_extension}"
             pages = extract_pages(path)

@@ -9,7 +9,7 @@ class CompanyProfile(BaseModel):
     set_aside_eligibilities: list[str] = Field(default_factory=list)
     states_served: list[str] = Field(default_factory=list)
     notice_types: list[str] = Field(default_factory=list)
-    minimum_days_to_respond: int = Field(default_factory=int)
+    minimum_days_to_respond: int = 0
 
     capabilities: list[str] = Field(default_factory=list)
     excluded_keywords: list[str] = Field(default_factory=list)

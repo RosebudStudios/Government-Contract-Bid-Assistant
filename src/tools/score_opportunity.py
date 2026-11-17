@@ -61,7 +61,7 @@ def check_naics_codes(notice, company_profile):
     if notice_naics_code in company_profile.naics_codes:
         return CheckResult("naics_code", "pass", f"company serves {notice_naics_code}")
     if not company_profile.naics_codes:
-        return CheckResult("naics_code", "pass", f"no company naics codes listed, empty means no restriction")
+        return CheckResult("naics_code", "pass", "no company naics codes listed, empty means no restriction")
     return CheckResult("naics_code", "fail",
                        f"naics code for {notice_naics_code}, which the company does not serve")
 
@@ -95,7 +95,7 @@ def check_notice_types(notice, company_profile):
     if notice_type in company_profile.notice_types:
         return CheckResult("type", "pass", f"company is eligible for {notice_type}")
     if not company_profile.notice_types:
-        return CheckResult("type", "pass", f"no company notice types listed, empty means no restriction")
+        return CheckResult("type", "pass", "no company notice types listed, empty means no restriction")
     return CheckResult("type", "fail",
                        f"type for {notice_type}, which the company is not eligible for")
 
