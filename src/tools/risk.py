@@ -13,7 +13,8 @@ ACTION_RISK: dict[str, RiskLevel] = {
     "get_opportunity": RiskLevel.LOW,
     "search_solicitation_documents": RiskLevel.LOW,
     "score_opportunity": RiskLevel.LOW,
-    "refresh_opportunities": RiskLevel.MEDIUM
+    "refresh_opportunities": RiskLevel.MEDIUM,
+    "shortlist_opportunities": RiskLevel.LOW,
 }
 
 

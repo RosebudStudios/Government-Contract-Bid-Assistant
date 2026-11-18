@@ -215,7 +215,7 @@ def format_results(hard_results, *, soft_results=None, summary=""):
         missing_information = format_missing_information(
             soft_results["missing_information"])
         lines.append(
-            f"Capability Hits: {capability_hits}\nExcluded Hits in Title: {excluded_hits_in_title}\nExcluded Hits in Description: {excluded_hits_in_description}\nEvidence: {evidence}\nMissing Information: {missing_information}")
+            f"Capability Hits in Title and Description: {capability_hits}\nExcluded Hits in Title: {excluded_hits_in_title}\nExcluded Hits in Description: {excluded_hits_in_description}\nCapability Evidence in Attachments: {evidence}\nMissing Information: {missing_information}")
     else:
         lines.append(
             "Stopped after the hard checks: this notice does not fit so no further analysis was done.")

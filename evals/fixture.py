@@ -88,11 +88,26 @@ def build_notices(today):
             naics_code="541512", type_of_set_aside="SBA", pop_state="Texas",
             notice_type="Solicitation", days_until_deadline=25,
             description_text="Independent cybersecurity assessment of agency systems."),
+        make_notice(
+            "EVAL-CLEARANCE-008", "Enterprise IT Modernization Support", today=today,
+            naics_code="541512", type_of_set_aside="SBA", pop_state="Texas",
+            notice_type="Solicitation", days_until_deadline=40,
+            description_text="Enterprise IT modernization and cybersecurity support for a defense agency."),
     ]
 
 
 # notice_id -> list of (filename, [(page_number, text), ...]) for the documents marked indexed
 INDEXED_DOCUMENTS = {
+    # Clears every hard check, but its attachment holds disqualifiers that only a document
+    # search for "clearance" (not the capability evidence) will surface.
+    "EVAL-CLEARANCE-008": [
+        ("Special_Requirements.pdf", [
+            (4, "Offerors must hold an active Top Secret facility clearance at the time of proposal "
+                "submission. The estimated contract value is $500 million over ten years. Offerors "
+                "shall demonstrate cybersecurity experience on three prior contracts of at least "
+                "$50 million each."),
+        ]),
+    ],
     "EVAL-FIT-001": [
         ("Statement_of_Work.pdf", [
             (3, "The contractor shall perform cloud migration of the agency's legacy applications "

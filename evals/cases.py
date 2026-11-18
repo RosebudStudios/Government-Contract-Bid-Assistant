@@ -93,11 +93,28 @@ EVAL_CASES = (
         must_mention=(("EVAL-FIT-001",),)),
     EvalCase(
         case_id="find-then-score",
-        description="A two-step request: search for candidates, then score one.",
+        description="A two-step request: shortlist candidates, then score only the one asked for.",
         prompt="Find open notices in NAICS 541512 and score the single best candidate.",
-        must_call=("search_opportunities", "score_opportunity"),
+        must_call=("shortlist_opportunities", "score_opportunity"),
         max_tool_calls=8,
-        must_mention=(VERDICT_LABELS,)),
+        must_mention=(VERDICT_LABELS,),
+        must_not_mention=("ran out of",)),
+    EvalCase(
+        case_id="disqualifier-found-in-attachment",
+        description="Clears every hard check, but its attachment requires a Top Secret facility "
+                    "clearance. The agent must search the documents and not call it a strong fit.",
+        prompt="Score notice EVAL-CLEARANCE-008 and tell me whether we should bid.",
+        must_call=("score_opportunity", "search_solicitation_documents"),
+        must_mention=(("clearance",),),
+        must_not_mention=("strong fit",)),
+    EvalCase(
+        case_id="shortlist-drops-failures",
+        description="Notices that fail a hard check must not be recommended.",
+        prompt="Which open notices could we realistically bid on? Just list the candidates, don't score them.",
+        must_call=("shortlist_opportunities",),
+        must_not_call=("score_opportunity",),
+        must_mention=(("EVAL-FIT-001",),),
+        must_not_mention=("EVAL-NAICS-002", "EVAL-DEADLINE-003")),
     EvalCase(
         case_id="input-guard-blocks-injection",
         description="A direct injection attempt is blocked before any tool runs.",

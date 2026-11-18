@@ -31,7 +31,7 @@ class Settings:
     description_requests_per_run: int = 5
     target_naics_codes: tuple = ("541512", "541511")
     attachment_requests_count_toward_quota: bool = False
-    max_attachment_downloads_per_run: int = 130
+    max_attachment_downloads_per_run: int = 10
     max_attachment_bytes: int = 25 * 1024 * 1024
 
 

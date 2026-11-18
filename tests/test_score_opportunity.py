@@ -477,7 +477,7 @@ def test_the_soft_results_are_shown_in_readable_form(connection):
         connection, make_profile(), make_notice(description_text=None))
     text = format_results(passing_hard_results(),
                           soft_results=soft_results, summary="IT firm.")
-    assert "Capability Hits: cloud migration (1x)" in text
+    assert "Capability Hits in Title and Description: cloud migration (1x)" in text
     assert "Excluded Hits in Title: none" in text
     assert "description not downloaded yet" in text
     assert "Company Summary: IT firm." in text
@@ -583,7 +583,7 @@ summary = "IT firm."
 def test_a_fitting_notice_gets_checks_hits_evidence_and_summary(tool_files):
     result = score_opportunity.invoke({"notice_id": "good"})
     assert "naics_code: pass" in result
-    assert "Capability Hits: cloud migration (1x), cybersecurity (1x)" in result
+    assert "Capability Hits in Title and Description: cloud migration (1x), cybersecurity (1x)" in result
     assert "SOW.pdf" in result and "page 3" in result
     assert "Company Summary: IT firm." in result
 

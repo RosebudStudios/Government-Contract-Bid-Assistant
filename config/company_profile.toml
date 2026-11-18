@@ -2,12 +2,12 @@ name = "Example Federal Services LLC"
 
 # hard checks 
 naics_codes = ["541512", "541511"]
-set_aside_eligibilities = ["SBA"]
-states_served = ["Texas", "Virginia"]
-notice_types = ["Solicitation", "Combined Synopsis/Solicitation"]
+set_aside_eligibilities = ["SBA", "SBP"]
+states_served = []
+notice_types = ["Solicitation", "Combined Synopsis/Solicitation", "Sources Sought", "Presolicitation"]
 minimum_days_to_respond = 5
 
 # soft signals
 capabilities = ["cloud migration", "cybersecurity", "help desk"]
 excluded_keywords = ["construction", "janitorial"]
-summary = "Eight-person IT firm; past work for VA and DHS on cloud and security."
+summary = "Eight-person IT firm; past work for VA and DHS on cloud and security. Holds no security clearance."

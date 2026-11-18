@@ -1,3 +1,5 @@
+"""Tests for the eval harness itself. They need no API key and make no model calls:
+the fixture is checked against the real tools, and the runner is driven by a scripted model."""
 import asyncio
 import importlib
 from datetime import date
@@ -169,6 +171,17 @@ def test_the_injection_text_reaches_the_agent_but_only_inside_the_fence(fixture_
     assert INJECTION_TOKEN not in output.replace(fenced, "")
 
 
+def test_the_clearance_notice_passes_the_hard_checks_but_its_attachment_holds_the_disqualifier(fixture_paths):
+    scored = call_real_tool("score_opportunity", {
+                            "notice_id": "EVAL-CLEARANCE-008"}, fixture_paths)
+    assert "fail" not in statuses(scored).values()
+    # the capability evidence alone does not reveal it
+    assert "Top Secret" not in scored
+    searched = call_real_tool("search_solicitation_documents",
+                              {"query": "facility clearance", "notice_id": "EVAL-CLEARANCE-008"}, fixture_paths)
+    assert "active Top Secret" in searched and "$500 million" in searched
+
+
 def test_a_missing_notice_is_reported_as_missing(fixture_paths):
     output = call_real_tool("score_opportunity", {
                             "notice_id": "EVAL-DOES-NOT-EXIST"}, fixture_paths)
@@ -185,6 +198,39 @@ def test_search_by_naics_finds_the_seeded_notices(fixture_paths):
     output = call_real_tool("search_opportunities", {
                             "naics_code": "541512"}, fixture_paths)
     assert "EVAL-FIT-001" in output and "EVAL-NAICS-002" not in output
+
+
+@pytest.fixture
+def todays_fixture_paths(tmp_path):
+    """The tools use the real current date, so these tests build the fixture relative to it."""
+    return build_fixture(tmp_path, today=date.today())
+
+
+def test_the_shortlist_keeps_the_clean_notices_and_drops_the_failures(todays_fixture_paths):
+    output = call_real_tool("shortlist_opportunities",
+                            {"limit": 10}, todays_fixture_paths)
+    # EVAL-NAICS-002 (335311) is never scanned: the company's NAICS codes are applied up front
+    assert ("Scanned 7 open notices. Passed every hard check: 5. "
+            "No failures but some unknown fields: 1. Failed at least one check: 1.") in output
+    assert "Failures by check (a notice can fail several): deadline 1." in output
+    for kept in ("EVAL-FIT-001", "EVAL-EXCLUDED-004", "EVAL-NODOCS-006", "EVAL-INJECT-007",
+                 "EVAL-UNKNOWN-005", "EVAL-UNKNOWN-005"):
+        assert kept in output
+    for dropped in ("EVAL-NAICS-002", "EVAL-DEADLINE-003"):
+        assert dropped not in output
+
+
+def test_the_shortlist_puts_the_notice_with_an_unknown_field_last(todays_fixture_paths):
+    output = call_real_tool("shortlist_opportunities",
+                            {"limit": 10}, todays_fixture_paths)
+    assert output.index("EVAL-UNKNOWN-005") > output.index("EVAL-INJECT-007")
+    assert "unknown: states_served (no place of performance listed)" in output
+
+
+def test_the_shortlist_can_be_narrowed_to_one_naics_code(todays_fixture_paths):
+    output = call_real_tool("shortlist_opportunities", {
+                            "naics_code": "541511"}, todays_fixture_paths)
+    assert "Scanned 1 open notices" in output and "EVAL-UNKNOWN-005" in output
 
 
 def test_patched_settings_are_restored_afterwards(fixture_paths):
@@ -285,3 +331,29 @@ def test_the_summary_counts_passes_per_case_and_overall():
 def test_the_command_line_rejects_a_zero_repeat():
     with pytest.raises(SystemExit):
         run_evals.parse_arguments(["--repeat", "0"])
+
+
+# ------------------------------------------------------------------ the demo
+
+def test_the_demo_answers_one_question_on_synthetic_data(monkeypatch, capsys):
+    from evals import demo
+
+    real_build_agent = demo.build_agent
+
+    def scripted_build_agent(tools, settings, **keyword_arguments):
+        replies = [tool_call_reply("shortlist_opportunities", {"naics_code": "541512"}),
+                   AIMessage(content="Top candidate: EVAL-FIT-001.")]
+        keyword_arguments["model"] = ScriptedModel(responses=replies)
+        return real_build_agent(tools, settings, **keyword_arguments)
+
+    monkeypatch.setattr(demo, "build_agent", scripted_build_agent)
+    demo.main(["--question", "Find open notices in NAICS 541512."])
+    printed = capsys.readouterr().out
+    assert "You: Find open notices in NAICS 541512." in printed
+    assert "Top candidate: EVAL-FIT-001." in printed
+
+
+def test_the_demo_banner_says_the_data_is_invented():
+    from evals import demo
+    assert "invented" in demo.BANNER and "quit" in demo.BANNER
+    assert all(question in demo.BANNER for question in demo.SUGGESTED_QUESTIONS)

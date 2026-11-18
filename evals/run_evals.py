@@ -39,6 +39,7 @@ TOOL_MODULES_USING_SETTINGS = (
     "src.tools.get_opportunity",
     "src.tools.search_solicitation_documents",
     "src.tools.score_opportunity",
+    "src.tools.shortlist_opportunities",
 )
 EXCLUDED_TOOL_NAMES = ("refresh_opportunities",)
 

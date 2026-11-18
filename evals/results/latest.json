@@ -1,14 +1,14 @@
 {
-  "date": "2026-11-16",
+  "date": "2026-11-17",
   "model": "claude-sonnet-5",
   "runs_per_case": 3,
-  "cases": 11,
-  "total_runs": 33,
-  "total_passes": 29,
-  "pass_rate": 0.879,
-  "input_tokens": 146957,
-  "output_tokens": 16013,
-  "seconds": 232.8,
+  "cases": 13,
+  "total_runs": 39,
+  "total_passes": 39,
+  "pass_rate": 1.0,
+  "input_tokens": 352898,
+  "output_tokens": 29238,
+  "seconds": 349.9,
   "per_case": [
     {
       "case_id": "fit-with-evidence",
@@ -62,11 +62,9 @@
     {
       "case_id": "unknown-notice-id",
       "description": "A notice id that does not exist must not produce a verdict.",
-      "passes": 2,
+      "passes": 3,
       "runs": 3,
-      "failures": [
-        "answer mentions none of: no notice, not found, couldn't find, could not find, doesn't exist, does not exist, unable to find, no record"
-      ]
+      "failures": []
     },
     {
       "case_id": "document-search-routing",
@@ -77,12 +75,24 @@
     },
     {
       "case_id": "find-then-score",
-      "description": "A two-step request: search for candidates, then score one.",
-      "passes": 0,
+      "description": "A two-step request: shortlist candidates, then score only the one asked for.",
+      "passes": 3,
       "runs": 3,
-      "failures": [
-        "agent raised GraphRecursionError: Recursion limit of 50 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/pytho"
-      ]
+      "failures": []
+    },
+    {
+      "case_id": "disqualifier-found-in-attachment",
+      "description": "Clears every hard check, but its attachment requires a Top Secret facility clearance. The agent must search the documents and not call it a strong fit.",
+      "passes": 3,
+      "runs": 3,
+      "failures": []
+    },
+    {
+      "case_id": "shortlist-drops-failures",
+      "description": "Notices that fail a hard check must not be recommended.",
+      "passes": 3,
+      "runs": 3,
+      "failures": []
     },
     {
       "case_id": "input-guard-blocks-injection",

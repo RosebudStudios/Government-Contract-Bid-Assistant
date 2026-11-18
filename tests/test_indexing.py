@@ -1,5 +1,3 @@
-import sqlite3
-
 import pytest
 
 from src import attachments

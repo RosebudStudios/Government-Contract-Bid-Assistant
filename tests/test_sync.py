@@ -15,7 +15,6 @@ from src.ingestion import (
     mark_day_exhausted,
     ingest,
     upsert,
-    get_notices_missing_description,
     save_description_text,
     init_db,
     parse_args,
