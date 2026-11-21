@@ -87,7 +87,7 @@ Agent      You ◄──► Agent (LangChain / LangGraph + Claude)
 
 ## Setup
 
-Requires Python 3.11 or newer, an Anthropic API key and a free SAM.gov API key.
+Requires Python 3.13 or newer, an Anthropic API key and a free SAM.gov API key.
 
 ```bash
 git clone https://github.com/RosebudStudios/Government-Contract-Bid-Assistant.git
